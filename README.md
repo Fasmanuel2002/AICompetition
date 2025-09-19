@@ -14,4 +14,11 @@ The kids started to do geastures wearing the Helios device
 
 The kids on the experiment has 18 unique gestures(8 BFRB == damaging and 10 non-BFRB == no damaging) 
 
+
+
 This competition challenges you to develop a predictive model capable of distinguishing (1) BFRB-like gestures from non-BFRB-like gestures and (2) the specific type of BFRB-like gesture. Critically, when your model is evaluated, half of the test set will include only data from the IMU, while the other half will include all of the sensors on the Helios device 
+
+
+The Evaluation will have F1 score as the most important thing 
+-Binary F1 on whether the gesture is one of the target or non-target types.
+-Macro F1 on gesture, where all non-target sequences are collapsed into a single non_target class
