@@ -10,3 +10,6 @@ The kids started to do geastures wearing the Helios device
 2.They followed this with a short pause wherein they did nothing (Pause); and
 
 3.Finally they performed a gesture from either the BFRB-like or non-BFRB-like category of movements (Gesture; see Table below).
+
+
+The kids on the experiment has 18 unique gestures(8 BFRB == damaging and 10 non-BFRB == no damaging) 
