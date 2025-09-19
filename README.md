@@ -1,0 +1,2 @@
+# AICompetition
+KaggleCompetition HSLU
