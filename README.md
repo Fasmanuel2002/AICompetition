@@ -36,4 +36,15 @@ This dataset contains sensor recordings taken while participants performed 8 BFR
 
 ==============================================================
 
-*DataSet*
+***DataSet***
+
+
+*train.csv*
+-336 Columns in this DataSet
+There are 3 Natural Language Data 
+  -Row_id
+  -Secuence_ID
+  -Subject
+-333 are Numerical Columns
+
+
