@@ -40,14 +40,15 @@ This dataset contains sensor recordings taken while participants performed 8 BFR
 
 
 *train.csv*
-*336 Columns in this DataSet*
+*341 Columns in this DataSet*
 
-*There are 3 Natural Language Data *
+*There are 3 Natural Language Data*
 
 - Row_id
-
+- Secuence_type: It has 2 classes Target(Up Stand) and Non-Target(Not Stand)
 - Secuence_ID
-
+- Orentiation (Seated Straight, Seated Lean Non Dom - FACE DOWN
+- **Gesture is the Target Column(the one we want to predict)**
 - Subject
 
 *333 are Numerical Columns*
