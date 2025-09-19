@@ -30,3 +30,10 @@ This dataset contains sensor recordings taken while participants performed 8 BFR
 -1x Inertial Measurement Unit (IMU; BNO080/BNO085): An integrated sensor that combines accelerometer, gyroscope, and magnetometer measurements with onboard processing to provide orientation and motion data.
 -5x Thermopile Sensor (MLX90632): A non-contact temperature sensor that measures infrared radiation.
 -5x Time-of-Flight Sensor (VL53L7CX): A sensor that measures distance by detecting how long it takes for emitted infrared light to bounce back from objects.
+
+
+
+
+==============================================================
+
+*DataSet*
