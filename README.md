@@ -40,17 +40,20 @@ This dataset contains sensor recordings taken while participants performed 8 BFR
 
 
 *train.csv*
--336 Columns in this DataSet
+*336 Columns in this DataSet*
 
-There are 3 Natural Language Data 
+*There are 3 Natural Language Data *
 
--Row_id
+- Row_id
 
--Secuence_ID
+- Secuence_ID
 
--Subject
+- Subject
 
-- 333 are Numerical Columns
+*333 are Numerical Columns*
+
+
+- tof_[1-5]_v[0-63] - There are five time-of-flight sensors on the watch that measure distance. In the dataset, the 0th pixel for the first time-of-flight sensor can be found with column name tof_1_v0, whereas the final pixel in the grid can be found under column tof_1_v63. This data is collected row-wise, where the first pixel could be considered in the top-left of the grid, with the second to its right, ultimately wrapping so the final value is in the bottom right (see image above). The particular time-of-flight sensor is denoted by the number at the start of the column name (e.g., 1_v0 is the first pixel for the first time-of-flight sensor while 5_v0 is the first pixel for the fifth time-of-flight sensor). If there is no sensor response (e.g., if there is no nearby object causing a signal reflection), a -1 is present in this field. Units are uncalibrated sensor values in the range 0-254. Each sensor contains 64 pixels arranged in an 8x8 grid, visualized in the figure below.(Convolutional Neuronal Network)
 
 
 
