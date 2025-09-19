@@ -22,3 +22,11 @@ This competition challenges you to develop a predictive model capable of disting
 The Evaluation will have F1 score as the most important thing 
 -Binary F1 on whether the gesture is one of the target or non-target types.
 -Macro F1 on gesture, where all non-target sequences are collapsed into a single non_target class
+
+In this competition you will use sensor data to classify body-focused repetitive behaviors (BFRBs) and other gestures.
+
+This dataset contains sensor recordings taken while participants performed 8 BFRB-like gestures and 10 non-BFRB-like gestures while wearing the Helios device on the wrist of their dominant arm. The Helios device contains three sensor types:
+
+-1x Inertial Measurement Unit (IMU; BNO080/BNO085): An integrated sensor that combines accelerometer, gyroscope, and magnetometer measurements with onboard processing to provide orientation and motion data.
+-5x Thermopile Sensor (MLX90632): A non-contact temperature sensor that measures infrared radiation.
+-5x Time-of-Flight Sensor (VL53L7CX): A sensor that measures distance by detecting how long it takes for emitted infrared light to bounce back from objects.
