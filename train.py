@@ -49,4 +49,44 @@ class SqueezeExcitationBlock(torch.nn.Module):
             return x * y.expand_as(x)
         
         
+class Residual_SqueezeExcitation_CNN_LSTM_block(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int , kernel_size : int, dropout = 0.3, weight_decay = 1e-4):
+        super().__init__()
+        
+        #First ConvBlock
+        self.conv1 = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, padding="same")
+        self.bn1 = nn.BatchNorm1d(num_features=out_channels)
+        
+        #Second ConvBlock
+        self.conv2 = nn.Conv1d(in_channels=out_channels, out_channels=out_channels, kernel_size=kernel_size,  padding="same")
+        self.bn2 = nn.BatchNorm1d(num_features=out_channels)
+        
+        self.conv3 = nn.Conv1d(in_channels=out_channels, out_channels=out_channels, kernel_size=kernel_size, padding="same")
+        self.bn3 = nn.BatchNorm1d(num_features=out_channels)
+        
+        
+        #Squeeze and Excitation Block
+        self.squeeze_excitation = SqueezeExcitationBlock(out_channels)
+        
+        ##Shortcut Connection Fighting Vanish Gradient
+        self.shortcut = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, bias=False)
+        self.shortcut_batchNormalization = nn.BatchNorm1d(out_channels)
+        
+        #Adding Dropout
+        self.dropout = nn.Dropout(dropout)
+        
+        self.bilstm = nn.LSTM(
+            input_size=out_channels,   # depende del tamaño de tus features en D2
+            hidden_size=128,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True
+        )
+        
+        self.lstm_proj = nn.Linear(256, out_channels)
+        
+        
+    def forward():
+        ...
+
         
