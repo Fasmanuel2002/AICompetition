@@ -26,7 +26,7 @@ importance weights for each channel and
 reweighting them, amplifying informative 
 features while suppressing less useful ones.
 """
-class SqueezeExcitationBlock(torch.nn.Module):
+class SqueezeExcitationBlock(nn.Module):
     def __init__(self, channels, reduction=8):
         super().__init__()
         #The part of the attention layers that learns about the weights of the channel
@@ -50,6 +50,13 @@ class SqueezeExcitationBlock(torch.nn.Module):
         
         
 class Residual_SqueezeExcitation_CNN_LSTM_block(nn.Module):
+    """
+    Hybrid block combining:
+    - 3× Conv1D layers with BatchNorm and ReLU
+    - Squeeze-and-Excitation channel attention
+    - Residual connection with shortcut
+    - BiLSTM for temporal modeling
+    """
     def __init__(self, in_channels: int, out_channels: int , kernel_size : int, dropout = 0.3, weight_decay = 1e-4):
         super().__init__()
         
@@ -86,7 +93,35 @@ class Residual_SqueezeExcitation_CNN_LSTM_block(nn.Module):
         self.lstm_proj = nn.Linear(256, out_channels)
         
         
-    def forward():
-        ...
-
+    def forward(self, x, mask):
+        #Shortcut 
+        shortcut = self.shortcut(x) * mask.unsqueeze(1)
+        shortcut = self.shortcut_batchNormalization(shortcut)
+        
+        #First Convolutional Neuronal Network
+        x = self.conv1(x) * mask.unsqueeze(1)
+        x = F.relu(self.bn1(x)) 
+        
+        #Second Convolutional Neuronal Network
+        x = self.conv2(x) * mask.unsqueeze(1)
+        x = F.relu(self.bn2(x))
+        
+        #Squeeze exitation block
+        x = self.squeeze_excitation(x, mask)
+        
+        #Add Shortcut
+        x += shortcut
+        x = F.relu(x)
+        
+        
+        #Droput
+        x = self.dropout(x) * mask.unsqueeze(1)
+        
+        x = x.transpose(1, 2)  # (B, T, C)
+        x, _ = self.bilstm(x)
+        x = self.lstm_proj(x[:, -1, :])
+        return x
+        
+        
+        
         
