@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pandas as pd
 
 
 def create_mask(lengths , max_len: int) -> float:
@@ -123,5 +124,54 @@ class Residual_SqueezeExcitation_CNN_LSTM_block(nn.Module):
         return x
         
         
+"""
+The PhaseAttentionLayerBlock computes a phase-specific temporal 
+attention vector over a sequence of features. 
+First, it generates self-attention scores for each timestep using a 
+small linear layer, masking out padded positions so 
+they do not influence the softmax. 
+These attention scores are then combined with the model’s 
+predicted phase-weights for that specific phase, producing a 
+phase-conditioned attention distribution. After renormalizing 
+the weights, the block computes a weighted sum of 
+the input sequence features, yielding a single context vector 
+that represents the information most relevant to that phase. 
+This allows the model to extract different temporal summaries 
+for different motion phases.
+"""       
+class PhaseAttetionLayerBlock(nn.Module):
+    def __init__(self, hidden_layer):
+        super().__init__()
+        #Making the self attention layer for this, this is going to be hidden layer with 1 output
+        self.attention = nn.Linear(hidden_layer,  1)
+        
+    def forward(self, x, weihgts, mask):
+        #Used lineal MLP 
+        scores_attention = torch.tanh(self.attention(x))
+        scores_attention = scores_attention.squeeze(-1)
+        
+        #It apply the mask by setting a large negative value for the paddings
+        scores_attention = scores_attention.masked_fill(mask == 0, -1e9)
+        
+        #Size of (Batch, sequence_length)
+        attention_weihgts = F.softmax(scores_attention, dim=1)
+        
+        #Combine with phase weights Size of(Batch, sequence_length) Self attention and wieghts are applied and create
+        #Phase-conditioned attention
+        combined_weights = attention_weihgts * weihgts 
+        
+        #Re-applu mask to zero our padding positions
+        combined_weights = combined_weights * mask
+        
+        combined_weights = combined_weights / (combined_weights.sum(dim=1, keepdims=True) + 1e-8)
+        
+        #Number of batch and hidden layer
+        context = torch.sum(x * combined_weights.unsqueeze(-1), dim=1)
+        
+        return context
+        
+        
+        
+    
         
         
