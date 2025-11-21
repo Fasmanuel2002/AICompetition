@@ -29,4 +29,3 @@ def seed_everything(seed):
     torch.use_deterministic_algorithms(True)
 
 
-pearse es el mas feo
