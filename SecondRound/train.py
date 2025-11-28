@@ -130,10 +130,10 @@ def train_model():
 
     # Optional: Train final model on full dataset
     final_model = MultiBranchClassifier(
-        number_imu_blocks=2,
+        number_imu_blocks=3,
         in_channels=[6, 5],
         out_channels=num_classes,
-        initial_channels_per_feature=4,
+        initial_channels_per_feature=16,
         cnn1d_channels=(256,  256),
         cnn1d_kernel_size=3,
         ToF_out_channels=32,
