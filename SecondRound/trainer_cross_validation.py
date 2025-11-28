@@ -12,6 +12,8 @@ from .gesture_secuence_dataset import GestureSequenceDataset
 from ..models.multi_branch_classifier import MultiBranchClassifier
 from ..config import GestureConfig
 from ..utils.utils import RandomState
+from torch.utils.tensorboard import SummaryWriter # type: ignore
+import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -42,6 +44,7 @@ class CrossValidator:
 
     
     def cross_validate(self):
+        writer = SummaryWriter(log_dir=f"runs/exp_{time.time()}")
         with mlflow.start_run():
 
             mlflow.log_params({
@@ -125,6 +128,11 @@ class CrossValidator:
                         train_loss = self._train_epoch(model, optimizer, train_loader)
                         val_metrics = self._validate_epoch(model, val_loader)
 
+                        #TensorBoard Logging
+                        writer.add_scalar(f"Seed{seed}/Fold{fold}/Train_Loss", train_loss, epoch)
+                        writer.add_scalar(f"Seed{seed}/Fold{fold}/Val_Loss", val_metrics['loss'], epoch)
+                        writer.add_scalar(f"Seed{seed}/Fold{fold}/Val_Acc", val_metrics['accuracy'], epoch)
+
                         mlflow.log_metrics({
                             f"seed{seed}_fold{fold}_train_loss": train_loss,
                             f"seed{seed}_fold{fold}_val_loss": val_metrics['loss'],
@@ -141,7 +149,8 @@ class CrossValidator:
                 "cv_mean_acc": np.mean(fold_scores),
                 "cv_std": np.std(fold_scores)
             })
-
+            
+            writer.close()
             return oof_predictions, np.mean(fold_scores)
 
 
