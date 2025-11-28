@@ -90,7 +90,7 @@ class CrossValidator:
                         train_dataset,
                         batch_size=self.config.batch_size,
                         shuffle=True,
-                        num_workers=0,
+                        num_workers=2,
                         pin_memory=True
                     )
 
@@ -98,14 +98,14 @@ class CrossValidator:
                         val_dataset,
                         batch_size=self.config.batch_size,
                         shuffle=False,
-                        num_workers=0,
+                        num_workers=2,
                         pin_memory=True
                     )
 
                     # MODEL
                     model = MultiBranchClassifier(
-                        number_imu_blocks=3,
-                        in_channels=[5, 6],
+                        number_imu_blocks=2,
+                        in_channels=[3, 3],
                         out_channels=num_classes,
                         initial_channels_per_feature=self.config.initial_channels_per_feature,
                         cnn1d_channels=self.config.cnn1d_channels,
