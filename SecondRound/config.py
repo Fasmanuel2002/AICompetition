@@ -58,9 +58,9 @@ class GestureConfig:
     
 @dataclass
 class TrainingConfig:
-    number_splits: int = 1
+    number_splits: int = 5
     number_seeds: int = 3
-    number_epochs: int = 3
+    number_epochs: int = 15
     learning_rate: float = 1e-3
     lstm_hidden: int = 128
     dropout_rate: float = 0.3

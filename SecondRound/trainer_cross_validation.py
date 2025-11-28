@@ -6,21 +6,22 @@ import mlflow
 from typing import Optional
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import StratifiedGroupKFold
 
 from .gesture_secuence_dataset import GestureSequenceDataset
 from ..models.multi_branch_classifier import MultiBranchClassifier
 from ..config import GestureConfig
 from ..utils.utils import RandomState
-from torch.utils.tensorboard import SummaryWriter # type: ignore
+from torch.utils.tensorboard import SummaryWriter  # type: ignore
 import time
+from collections import Counter
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class CrossValidator:
     def __init__(
-        self, 
+        self,
         config,
         X_imu,
         X_thm,
@@ -37,12 +38,29 @@ class CrossValidator:
         self.groups = groups
         self.random_seed = random_seed
 
-        self.skf = GroupKFold(n_splits=self.config.number_splits)
+        # Número de clases
+        self.num_classes = (
+            len(GestureConfig.TARGET_GESTURES)
+            + len(GestureConfig.NON_TARGET_GESTURES)
+        )
+
+        # Pesos inversamente proporcionales a la frecuencia de cada clase
+        class_counts = np.bincount(self.y.astype(int), minlength=self.num_classes)
+        class_weights = class_counts.sum() / (self.num_classes * class_counts)
+
+        # Guardamos el criterio con pesos
+        self.class_weights = torch.tensor(class_weights, dtype=torch.float32, device=device)
+        self.criterion = nn.CrossEntropyLoss(weight=self.class_weights)
+
+        # StratifiedGroupKFold en vez de GroupKFold
+        self.skf = StratifiedGroupKFold(
+            n_splits=self.config.number_splits,
+            shuffle=True,
+            random_state=random_seed,
+        )
 
         self.logger = logging.getLogger(self.__class__.__name__)
 
-
-    
     def cross_validate(self):
         writer = SummaryWriter(log_dir=f"runs/exp_{time.time()}")
         with mlflow.start_run():
@@ -55,19 +73,24 @@ class CrossValidator:
                 "batch_size": self.config.batch_size
             })
 
-            num_classes = (
-                len(GestureConfig.TARGET_GESTURES) +
-                len(GestureConfig.NON_TARGET_GESTURES)
-            )
+            num_classes = self.num_classes
 
             oof_predictions = np.zeros((len(self.y), num_classes), dtype=np.float32)
             fold_scores = []
 
-            # Seeds
+            
+            print("\n===== CLASS DISTRIBUTION PER FOLD =====")
+            for fold, (_, val_idx) in enumerate(
+                self.skf.split(self.X_imu, self.y, groups=self.groups)
+            ):
+                print(f"Fold {fold}: {Counter(self.y[val_idx])}")
+            print("=======================================\n")
+
+            
             for seed in tqdm(range(self.config.number_seeds), desc="Random Seeds"):
                 self._set_seed(seed)
 
-                # Folds
+            
                 for fold, (train_idx, val_idx) in tqdm(
                     enumerate(self.skf.split(self.X_imu, self.y, groups=self.groups)),
                     desc="Folds",
@@ -93,7 +116,7 @@ class CrossValidator:
                         train_dataset,
                         batch_size=self.config.batch_size,
                         shuffle=True,
-                        num_workers=2,
+                        num_workers=20,
                         pin_memory=True
                     )
 
@@ -101,13 +124,13 @@ class CrossValidator:
                         val_dataset,
                         batch_size=self.config.batch_size,
                         shuffle=False,
-                        num_workers=2,
+                        num_workers=20,
                         pin_memory=True
                     )
 
                     # MODEL
                     model = MultiBranchClassifier(
-                        number_imu_blocks=2,
+                        number_imu_blocks=1,
                         in_channels=[3, 3],
                         out_channels=num_classes,
                         initial_channels_per_feature=self.config.initial_channels_per_feature,
@@ -128,7 +151,7 @@ class CrossValidator:
                         train_loss = self._train_epoch(model, optimizer, train_loader)
                         val_metrics = self._validate_epoch(model, val_loader)
 
-                        #TensorBoard Logging
+                        # TensorBoard Logging
                         writer.add_scalar(f"Seed{seed}/Fold{fold}/Train_Loss", train_loss, epoch)
                         writer.add_scalar(f"Seed{seed}/Fold{fold}/Val_Loss", val_metrics['loss'], epoch)
                         writer.add_scalar(f"Seed{seed}/Fold{fold}/Val_Acc", val_metrics['accuracy'], epoch)
@@ -149,22 +172,20 @@ class CrossValidator:
                 "cv_mean_acc": np.mean(fold_scores),
                 "cv_std": np.std(fold_scores)
             })
-            
+
             writer.close()
             return oof_predictions, np.mean(fold_scores)
 
-
-
     def _train_epoch(self, model, optimizer, loader):
         model.train()
-        total_loss = 0
+        total_loss = 0.0
 
         for imu, thm, tof, labels in loader:
             imu, thm, tof, labels = imu.to(device), thm.to(device), tof.to(device), labels.to(device)
 
             optimizer.zero_grad()
             outputs = model(imu, tof, thm)
-            loss = nn.CrossEntropyLoss()(outputs, labels)
+            loss = self.criterion(outputs, labels)   
             loss.backward()
             optimizer.step()
 
@@ -172,10 +193,9 @@ class CrossValidator:
 
         return total_loss / len(loader)
 
-
     def _validate_epoch(self, model, loader):
         model.eval()
-        total_loss = 0
+        total_loss = 0.0
         correct = 0
         total = 0
 
@@ -184,7 +204,7 @@ class CrossValidator:
                 imu, thm, tof, labels = imu.to(device), thm.to(device), tof.to(device), labels.to(device)
 
                 outputs = model(imu, tof, thm)
-                loss = nn.CrossEntropyLoss()(outputs, labels)
+                loss = self.criterion(outputs, labels)   
 
                 total_loss += loss.item()
 
@@ -197,7 +217,6 @@ class CrossValidator:
             "accuracy": 100 * correct / total
         }
 
-
     def _predict(self, model, loader):
         model.eval()
         all_preds = []
@@ -209,7 +228,6 @@ class CrossValidator:
                 all_preds.append(outputs.cpu().numpy())
 
         return np.vstack(all_preds)
-
 
     @staticmethod
     def _set_seed(seed):

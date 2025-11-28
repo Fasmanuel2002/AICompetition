@@ -104,7 +104,7 @@ def train_model():
     config = TrainingConfig(
         number_splits=3,
         number_seeds=1,
-        number_epochs=3,
+        number_epochs=15,
         learning_rate=1e-3,
         lstm_hidden=128,
         dropout_rate=0.3
@@ -130,10 +130,10 @@ def train_model():
 
     # Optional: Train final model on full dataset
     final_model = MultiBranchClassifier(
-        number_imu_blocks=2,
-        in_channels=[6, 5],
+        number_imu_blocks=1,
+        in_channels=[6],
         out_channels=num_classes,
-        initial_channels_per_feature=4,
+        initial_channels_per_feature=16,
         cnn1d_channels=(256,  256),
         cnn1d_kernel_size=3,
         ToF_out_channels=32,

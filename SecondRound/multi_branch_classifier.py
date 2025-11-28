@@ -302,12 +302,13 @@ class MultiBranchClassifier(nn.Module):
         super().__init__()
 
         # U-Net for gesture segmentation
-        self.unet_1d = U_NET1D(in_channles=sum(in_channels))
+        self.unet_1d = U_NET1D(in_channles=in_channels[0])
 
         self.number_imu_blocks = number_imu_blocks
 
         # in_channels=[6,5] → [0,6,11]
-        self.block_indexes = [0] + [sum(in_channels[:i+1]) for i in range(len(in_channels))]
+        self.block_indexes = [0, in_channels[0]]
+
 
         
         
@@ -401,7 +402,7 @@ class MultiBranchClassifier(nn.Module):
             
             list_x_tof = []
             for i in range(5):
-                x_block = x_tof[:, :, i*64:(i+1)*64].reshape(-1,1,8,8)
+                x_block = x_tof[:, :, i].reshape(-1, 1, 8, 8)
                 out = self.tof_block[i](x_block)
                 out = out.reshape(x.shape[0], -1, out.shape[1]).transpose(1, 2)
                 list_x_tof.append(out)
