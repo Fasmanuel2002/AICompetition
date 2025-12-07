@@ -1,96 +1,6 @@
-import os
-import pickle
-import random
-from dataclasses import dataclass
-
-import numpy as np
-import pandas as pd
-import pandas as pd
-import polars as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from matplotlib import pyplot as plt
-from schedulefree import RAdamScheduleFree
-from scipy.spatial.transform import Rotation as R
-from sklearn.metrics import f1_score
-from sklearn.model_selection import StratifiedGroupKFold
-from sklearn.preprocessing import StandardScaler
-from torch.utils.data import DataLoader, Dataset
-from torchinfo import summary
-
-
-
-def seed_everything(seed):
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    torch.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.use_deterministic_algorithms(True)
-
-
-@dataclass
-class Configuration:
-    sequence_lenght: int = 75
-    number_splits: int = 10
-    number_seeds: int = 5
-    number_epochs: int = 15
-    batch_size: int = 32
-    learning_rate : float = 5e-3
-    betas: tuple[float, float] = (0.9,0.999)
-    label_smoothing: float = 0.1
-    auxiliar_loss_weight: float = 0.5
-    
-configuration = Configuration()
-
-target_gestures = [
-    "Above ear - pull hair",
-    "Cheek - pinch skin",
-    "Eyebrow - pull hair",
-    "Eyelash - pull hair",
-    "Forehead - pull hairline",
-    "Forehead - scratch",
-    "Neck - pinch skin",
-    "Neck - scratch",
-]
-
-non_target_gestures = [
-    "Write name on leg",
-    "Wave hello",
-    "Glasses on/off",
-    "Text on phone",
-    "Write name in air",
-    "Feel around in tray and pull out an object",
-    "Scratch knee/leg skin",
-    "Pull air toward your face",
-    "Drink from bottle/cup",
-    "Pinch knee/leg skin",
-]
-
-all_gestures_in_dataset = target_gestures + non_target_gestures
-dict_gestures_dataset = {v : i for i, v in enumerate(all_gestures_in_dataset)}
-
-"""
-Maybe it can Change
-"""
-class TrainDataSet(Dataset):
-    def __init__(self, X, X_tof, Y = None):
-        self.X = torch.FloatTensor(X)
-        self.X_tof = torch.FloatTensor(X_tof)
-        
-        if Y is not None:
-            self.Y = torch.LongTensor(Y)
-    
-    def __len__(self) -> int:
-        return self.X.shape[0]
-    
-    def __getitem__(self, index):
-        if "Y" not in dir(self):
-            return (self.X[index], self.X_tof[index], self.Y[index])
-        return (self.X[index], self.X_tof[index], self.Y[index], torch.Tensor())
-    
-
 
 
 """
@@ -109,7 +19,8 @@ class Conv2DReLUBN(nn.Module):
         )
         def forward(self, x):
             return self.layers(x)
-   
+        
+
 #Combine Everything for the ToF block   
 class ToF_2D_Block(nn.Module):
     def __init__(self, output_channels, kernel_size):
@@ -138,7 +49,7 @@ class ToF_2D_Block(nn.Module):
     def forward(self, x):
         return self.layers(x)
     
-   
+
 """
 The Conv1D with LSTM for The IMU, the Tof, The thm
 """ 
@@ -191,6 +102,7 @@ class Conv1DReLUBN_LSTM(nn.Module):
         x = x.permute(0, 2, 1) #(batch, channels, lenght)
         return x
     
+
 """
 Multi-Layer Perceptron: Linear -> ReLU -> Dropout -> Linear -> ReLU -> Dropout
 """
@@ -216,6 +128,7 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.layers(x)
     
+
 class U_NET1D(nn.Module):
     def __init__(self, in_channles, base_channels=32):
         super().__init__()
@@ -271,14 +184,22 @@ class U_NET1D(nn.Module):
         x1 = self.encoder1(x)
         x2 = self.encoder2(self.pool1(x1))
         x3 = self.encoder3(self.pool2(x2))
-        
+
         d2 = self.upcoder2(x3)
+        # Match dimensions before concatenation
+        if d2.shape[2] != x2.shape[2]:
+            d2 = F.interpolate(d2, size=x2.shape[2], mode='linear', align_corners=False)
         d2 = self.decoder2(torch.cat([d2, x2], dim=1))
-        
+
         d1 = self.upcoder1(d2)
+        # Match dimensions before concatenation
+        if d1.shape[2] != x1.shape[2]:
+            d1 = F.interpolate(d1, size=x1.shape[2], mode='linear', align_corners=False)
         d1 = self.decoder1(torch.cat([d1, x1], dim=1))
-        
+
         return self.out(d1)
+    
+
 """
 Fusion everypart of the layers that are the THM and the IMU
 """
@@ -342,16 +263,22 @@ class CNN1D_LSTM_Branch(nn.Module):
     def forward(self, x, gesture_segment):
         x = self.inital_layers(x)
         x = self.CNN1D_layers(x)
+
+        # Resize gesture_segment to match x's temporal dimension
+        if gesture_segment.shape[2] != x.shape[2]:
+            gesture_segment = F.interpolate(gesture_segment, size=x.shape[2], mode='linear', align_corners=False)
+
         #Gestures that are part of the target gestures
         x1_gestures = (x * (gesture_segment > 0)).sum(dim=2) / (gesture_segment > 0).sum(dim=2).clamp(min=1)
         #Non gestures that are part of the non target gestures
         x2_non_gestures = (x * (gesture_segment < 0)).sum(dim=2) / (gesture_segment < 0).sum(dim=2).clamp(min=1)
-        
+
         x = torch.cat([x1_gestures, x2_non_gestures], dim=1)
         out = self.mlp(x)
-        
+
         return x, out
-      
+    
+
 """
 Fusion Everything in the model, is the One you need to call
 """  
@@ -367,101 +294,140 @@ class MultiBranchClassifier(nn.Module):
         cnn1d_kernel_size,
         ToF_out_channels,
         ToF_kernel_size,
+        THM_out_channels,
+        THM_kernel_size,
         mlp_dropout,
-        lstm_hidden=128
-        ):
+        lstm_hidden=256
+    ):
         super().__init__()
+
+        # U-Net for gesture segmentation
         self.unet_1d = U_NET1D(in_channles=sum(in_channels))
-        
+
         self.number_imu_blocks = number_imu_blocks
+
+        # in_channels=[6,5] → [0,6,11]
+        self.block_indexes = [0] + [sum(in_channels[:i+1]) for i in range(len(in_channels))]
+
         
-        self.block_indexes = [1] + [1 + sum(in_channels[: i+1]) for i in range(len(in_channels))]
+        
+        self.thm_embed = nn.Linear(5, THM_out_channels * 5)
+
         
         self.cnn_branches = nn.ModuleList(
-             [
+            [
+                # IMU branches
                 CNN1D_LSTM_Branch(
-                    in_channels[i],
-                    out_channels,
-                    initial_channels_per_feature,
-                    cnn1d_channels,
-                    cnn1d_kernel_size,
-                    mlp_dropout,
-                    lstm_hidden
+                    input_channels=in_channels[i],
+                    output_channels=out_channels,
+                    initial_channels_per_feature=initial_channels_per_feature,
+                    CNN1D_channels_size=cnn1d_channels,
+                    CNN1D_kernel_size=cnn1d_kernel_size,
+                    mlp_dropout=mlp_dropout,
+                    lstm_hidden=lstm_hidden
                 )
                 for i in range(len(in_channels))
-            ] 
-            + [
+            ]
+            +
+            [
+                # TOF branch
                 CNN1D_LSTM_Branch(
-                    ToF_out_channels * 5,
-                    out_channels,
-                    initial_channels_per_feature,
-                    cnn1d_channels,
-                    cnn1d_kernel_size,
-                    mlp_dropout,
-                    lstm_hidden
+                    input_channels=ToF_out_channels * 5,
+                    output_channels=out_channels,
+                    initial_channels_per_feature=initial_channels_per_feature,
+                    CNN1D_channels_size=cnn1d_channels,
+                    CNN1D_kernel_size=cnn1d_kernel_size,
+                    mlp_dropout=mlp_dropout,
+                    lstm_hidden=lstm_hidden
                 )
-                 
-                ]
-        ) 
-        self.tof_block = nn.ModuleList([
-            ToF_2D_Block(
-                output_channels=ToF_out_channels,
-                kernel_size=ToF_kernel_size
-            )
-            #5 = for the versions of 5 tofs
-            for _ in range(5)
-        ]
+            ]
+            +
+            [
+                # THM branch
+                CNN1D_LSTM_Branch(
+                    input_channels=THM_out_channels * 5,
+                    output_channels=out_channels,
+                    initial_channels_per_feature=initial_channels_per_feature,
+                    CNN1D_channels_size=cnn1d_channels,
+                    CNN1D_kernel_size=cnn1d_kernel_size,
+                    mlp_dropout=mlp_dropout,
+                    lstm_hidden=lstm_hidden
+                )
+            ]
         )
+
         
-        n_channels = cnn1d_channels[-1] * (len(in_channels) + 1) * 2
+        self.tof_block = nn.ModuleList([
+            ToF_2D_Block(output_channels=ToF_out_channels, kernel_size=ToF_kernel_size)
+            for _ in range(5)
+        ])
+
         
-        self.mlp_all = MLP(number_channels=n_channels,mlp_dropout=mlp_dropout, out_channels=out_channels)
+        self.thm_block = nn.ModuleList([
+            ToF_2D_Block(output_channels=THM_out_channels, kernel_size=THM_kernel_size)
+            for _ in range(5)
+        ])
+
         
-        self.ensemble_all = nn.Linear((len(in_channels) + 2) * out_channels, out_channels)
-        
-        n_channels = cnn1d_channels[-1] * self.number_imu_blocks * 2
-        
-        self.mlp_imu = MLP(number_channels=n_channels, mlp_dropout=mlp_dropout, out_channels=out_channels)
-        
-        self.ensemble_imu = nn.Linear(out_channels * (self.number_imu_blocks + 1), out_features=out_channels)
+        n_channels = cnn1d_channels[-1] * (len(in_channels) + 2) * 2
+        self.mlp_all = MLP(n_channels, mlp_dropout, out_channels)
+        self.ensemble_all = nn.Linear(
+            out_channels + 4 * 128,
+            out_channels
+        )
+
+        n_channels = cnn1d_channels[-1] * number_imu_blocks * 2
+        self.mlp_imu = MLP(n_channels, mlp_dropout, out_channels)
+        self.ensemble_imu = nn.Linear(
+            out_channels + number_imu_blocks * 128,
+            out_channels
+        )
+
+    def forward(self, x, x_tof, x_thm):
+
+            list_of_x = []
+            list_out_puts = []
     
-    def forward(self, x, x_tof):
-        list_of_x = []
-        list_out_puts = []
-        
-        gesture_segment = torch.sigmoid(self.unet_1d(x))
-        for i in range(len(self.block_indexes) - 1):
-            x_block = x[:, self.block_indexes[i] : self.block_indexes[i + 1]]
-            x_block, out = self.cnn_branches[i](x_block, gesture_segment)
-            list_of_x.append(x_block)
-            list_out_puts.append(out)
             
-        list_x_tof = []
-        for i in range(5):
-            x_block = x_tof[:,:,i].reshape(-1,1,8,8) #(H:8, W:8)
-            out = self.tof_block[i](x_block)
-            out = out.reshape(x.shape[0], -1, out.shape[1]).transpose(1,2)
-            list_x_tof.append(out)
-        
-        x_tof = torch.cat(list_x_tof, dim=1)
-        x_tof, out = self.cnn_branches[-1](x_tof, gesture_segment)
-        
-        list_of_x.append(x_tof)
-        
-        list_out_puts.append(out)
-        
-        x_all = torch.cat(list_of_x, dim=1)
-        out_all = self.mlp_all(x_all)
-        out_all = self.ensemble_all(torch.cat([out_all] + list_out_puts, dim=1))
-        
-        x_imu = torch.cat(list_of_x[: self.number_imu_blocks], dim=1)
-        out_imu = self.mlp_imu(x_imu)
-        out_imu = self.ensemble_imu(torch.cat([out_imu] + list_out_puts[: self.number_imu_blocks], dim=1))
-        
-        out = torch.stack([out_all, out_imu] + list_out_puts, dim=1)
-        return out
-        
+            gesture_segment = torch.sigmoid(self.unet_1d(x))
+    
             
-        
-        
-        
+            for i in range(len(self.block_indexes) - 1):
+                x_block = x[:, self.block_indexes[i] : self.block_indexes[i + 1], :]
+                x_block, out = self.cnn_branches[i](x_block, gesture_segment)
+                list_of_x.append(x_block)
+                list_out_puts.append(out)
+    
+            
+            list_x_tof = []
+            for i in range(5):
+                x_block = x_tof[:, :, i*64:(i+1)*64].reshape(-1,1,8,8)
+                out = self.tof_block[i](x_block)
+                out = out.reshape(x.shape[0], -1, out.shape[1]).transpose(1, 2)
+                list_x_tof.append(out)
+    
+            x_tof_processed = torch.cat(list_x_tof, dim=1)
+            x_tof_processed, out_tof = self.cnn_branches[len(self.block_indexes)-1](
+                x_tof_processed, gesture_segment
+            )
+            list_of_x.append(x_tof_processed)
+            list_out_puts.append(out_tof)
+    
+            
+            x_thm_embed = self.thm_embed(x_thm)   # [batch, time, THM_out*5]
+            x_thm_transposed = x_thm_embed.transpose(1, 2)
+    
+            x_thm_processed, out_thm = self.cnn_branches[len(self.block_indexes)](
+                x_thm_transposed, gesture_segment
+            )
+            list_of_x.append(x_thm_processed)
+            list_out_puts.append(out_thm)
+    
+            # --- FINAL FUSION ---
+            x_all = torch.cat(list_of_x, dim=1)
+            out_all = self.mlp_all(x_all)
+            out_all = self.ensemble_all(torch.cat([out_all] + list_out_puts, dim=1))
+    
+            
+    
+            return out_all
