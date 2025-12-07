@@ -1,0 +1,10 @@
+# Ignorar imágenes comunes
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.webp
+*.h5
+*.csv
