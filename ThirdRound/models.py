@@ -271,7 +271,7 @@ class CNN1D_LSTM_Branch(nn.Module):
         out = self.mlp(x)  # (B, 128)
         return x, out
 
-
+#gesture_mask = torch.sigmoid(self.unet_1d(x))
 NUM_CLASSES = 18
 BRANCH_FEATURES = 128
 
@@ -281,7 +281,7 @@ class MultiBranchClassifier(nn.Module):
         self,
         number_imu_blocks,
         in_channels,
-        out_channels,                 # num_classes (18)
+        out_channels,                 
         initial_channels_per_feature,
         cnn1d_channels,
         cnn1d_kernel_size,
@@ -294,12 +294,12 @@ class MultiBranchClassifier(nn.Module):
     ):
         super().__init__()
 
-        num_classes = out_channels        # 18
-        branch_features = BRANCH_FEATURES # 128
+        num_classes = out_channels       
+        branch_features = BRANCH_FEATURES 
 
 
         self.unet_1d = UNet1D(
-            in_channels=sum(in_channels),  # 6
+            in_channels=sum(in_channels),  
             base_channels=16
         )
 
@@ -387,16 +387,29 @@ class MultiBranchClassifier(nn.Module):
         )
 
     def forward(self, x, x_tof, x_thm):
-        
+
         list_of_x = []
         list_outs = []
 
         
-        gesture_mask = torch.sigmoid(self.unet_1d(x))  
         
-        gesture_mask = F.avg_pool1d(gesture_mask, kernel_size=5, stride=1, padding=2)
+        gesture_mask = F.avg_pool1d(x[:, :1], kernel_size=5, stride=1, padding=2)
+        gesture_mask = torch.tanh(gesture_mask)
+# (B,1,T)
 
-        B = x.shape[0]
+        if gesture_mask.dim() == 2:
+            gesture_mask = gesture_mask.unsqueeze(1)
+
+        
+        
+        T = x.shape[2]
+        if gesture_mask.shape[2] > T:
+            gesture_mask = gesture_mask[:, :, :T]
+        elif gesture_mask.shape[2] < T:
+            pad = T - gesture_mask.shape[2]
+            gesture_mask = F.pad(gesture_mask, (0, pad))
+
+        
 
         
         for i in range(len(self.block_indexes) - 1):
@@ -405,32 +418,32 @@ class MultiBranchClassifier(nn.Module):
             list_of_x.append(feat)
             list_outs.append(out)
 
-        
+    
+        B = x.shape[0]
         tof_feats = []
         for i in range(5):
             t = x_tof[:, :, i * 64:(i + 1) * 64]   # (B, T, 64)
             t = t.reshape(-1, 1, 8, 8)
-            t = self.tof_block[i](t)              # (B*T, C, 1, 1)
-            t = t.reshape(B, -1, t.shape[1]).transpose(1, 2)  # (B, C', T)
+            t = self.tof_block[i](t)
+            t = t.reshape(B, -1, t.shape[1]).transpose(1, 2)
             tof_feats.append(t)
 
-        tof_all = torch.cat(tof_feats, dim=1)       # (B, C_tot, T)
+        tof_all = torch.cat(tof_feats, dim=1)
         feat, out = self.cnn_branches[len(self.block_indexes) - 1](tof_all, gesture_mask)
         list_of_x.append(feat)
         list_outs.append(out)
 
-        
-        thm = self.thm_embed(x_thm).transpose(1, 2)  # (B, C, T)
+        thm = self.thm_embed(x_thm).transpose(1, 2)
         feat, out = self.cnn_branches[len(self.block_indexes)](thm, gesture_mask)
         list_of_x.append(feat)
         list_outs.append(out)
 
-        
-        x_all = torch.cat(list_of_x, dim=1)   # (B, sum_feat)
-        out_all = self.mlp_all(x_all)        # (B, 18)
+ 
+        x_all = torch.cat(list_of_x, dim=1)
+        out_all = self.mlp_all(x_all)
 
         out_all = self.ensemble_all(
             torch.cat([out_all] + list_outs, dim=1)
-        )                                     # (B, 18)
+        )
 
         return out_all
