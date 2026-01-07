@@ -52,6 +52,7 @@ N_TARGET = len(target_gestures)  # 8
 N_GESTURES = len(all_gestures)   # 18
 bce_bin = nn.BCEWithLogitsLoss()
 config = Config()
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     #Seed everything
     seed_everything(0)
@@ -145,6 +146,152 @@ def main():
     Y = np.stack([Y_main, Y_aux], axis=1)
     groups = df.select(["sequence_id", "subject"]).unique(maintain_order=True).select("subject").to_series().to_numpy()
 
+    print("Using:", device)
+    if torch.cuda.is_available():
+        print("GPU:", torch.cuda.get_device_name(0))
+
+    # IMU channels are defined by imu_feature_blocks (THM is separate)
+    in_channels = [len(b) for b in imu_feature_blocks]
+    assert X.shape[1] == sum(in_channels), (X.shape, in_channels, sum(in_channels))
+
+    out_dim = len(all_gestures) + len(orientations)
+
+    sgkf = StratifiedGroupKFold(
+        n_splits=config.n_splits,
+        shuffle=True,
+        random_state=0
+    )
+
+    # Store OOF logits for gestures (18) + bin_logit (for threshold tuning)
+    logits_oof = np.zeros((config.n_epochs, len(Y_main), len(all_gestures)), dtype=np.float32)
+    binlogit_oof = np.zeros((config.n_epochs, len(Y_main)), dtype=np.float32)
+
+    for fold, (idx_train, idx_valid) in enumerate(sgkf.split(X, Y_main, groups)):
+        print(f"\n================ FOLD {fold} ================")
+
+        # ---------- TRAIN ----------
+        ds_train = MyDataset(
+            X[idx_train], X_tof[idx_train], X_thm[idx_train],
+            y_gesture=Y_main[idx_train],
+            y_orientation=Y_aux[idx_train],
+            gesture_segment_true=gesture_segment_true[idx_train],
+            mask_valid=mask_valid[idx_train],
+        )
+        dl_train = DataLoader(
+            ds_train,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=0,
+            pin_memory=True,
+            drop_last=True,
+        )
+
+        # ---------- VALID ----------
+        ds_valid = MyDataset(
+            X[idx_valid], X_tof[idx_valid], X_thm[idx_valid],
+            y_gesture=Y_main[idx_valid],
+            y_orientation=Y_aux[idx_valid],
+            gesture_segment_true=gesture_segment_true[idx_valid],
+            mask_valid=mask_valid[idx_valid],
+        )
+        dl_valid = DataLoader(
+            ds_valid,
+            batch_size=config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True,
+            drop_last=False,
+        )
+
+        for seed in range(config.n_seeds):
+            seed_everything(seed)
+
+            model = MultiBranchClassifier(
+                number_imu_blocks=n_imu_blocks,
+                in_channels=in_channels,
+                out_channels=out_dim,
+                initial_channels_per_feature=16,
+                cnn1d_channels=(128, 256),
+                cnn1d_kernel_size=3,
+                ToF_out_channels=32,
+                ToF_kernel_size=3,
+                THM_out_channels=16,
+                THM_kernel_size=3,
+                mlp_dropout=0.5,
+                lstm_hidden=128,
+                unet_in_channels=X.shape[1],
+            )
+
+            if fold == 0 and seed == 0:
+                print(
+                    summary(
+                        model=model,
+                        input_size=[
+                            (config.batch_size,) + X.shape[1:],      # x: (B, C, T)
+                            (config.batch_size,) + X_tof.shape[1:],  # x_tof: (B, T, 320)
+                            (config.batch_size,) + X_thm.shape[1:],  # x_thm: (B, T, 5)
+                        ],
+                        col_names=["input_size", "output_size", "num_params"],
+                        col_width=20,
+                    )
+                )
+
+            model.to(device)
+
+            optimizer = RAdamScheduleFree(
+                model.parameters(),
+                lr=config.lr,
+                betas=config.betas,
+                weight_decay=1e-5
+            )
+
+            # You can tune these:
+            LAMBDA_BIN = 1.0
+            UNET_W = 0.0  # set to 0.1 if you want explicit U-Net supervision
+
+            print(f"fold-seed: {fold}-{seed}")
+            for epoch in range(config.n_epochs):
+                # ---- TRAIN ----
+                train_loss = train(model, dl_train, optimizer, device, epoch=epoch, lambda_bin=LAMBDA_BIN, unet_weight=UNET_W)
+
+                # ---- VALID ----
+                logits_valid, binlogit_valid = predict_logits(model, dl_valid, device)  # (N_valid,18), (N_valid,)
+                y_valid = Y_main[idx_valid]
+
+                base = metric_basic(y_valid, logits_valid)
+                # quick threshold sweep (cheap): choose thr best on this fold+epoch
+                best_thr = 0.5
+                best_score = base
+                for thr in np.linspace(0.05, 0.95, 19):
+                    s = metric_with_threshold(y_valid, logits_valid, binlogit_valid, thr)
+                    if s > best_score:
+                        best_score = s
+                        best_thr = float(thr)
+
+                print(f"[Epoch {epoch}] valid metric base={base:.4f} | best_thr={best_thr:.2f} => {best_score:.4f}")
+
+                # Save OOF (per-epoch, per-fold) into global buffers
+                # NOTE: if you use multiple folds, later folds will overwrite indices (that's OK for OOF)
+                logits_oof[epoch, idx_valid] = logits_valid
+                binlogit_oof[epoch, idx_valid] = binlogit_valid
+
+                # Save last 2 epochs
+                if epoch >= config.n_epochs - 2:
+                    torch.save(model.state_dict(), f"{MODEL_DIR}/model_{fold}_{seed}_{epoch}.pth")
+
+    # ============================================================
+    # Global OOF: pick best (epoch, thr)
+    # ============================================================
+    best = (-1.0, None, None)
+    for epoch in range(config.n_epochs):
+        for thr in np.linspace(0.05, 0.95, 91):
+            sc = metric_with_threshold(Y_main, logits_oof[epoch], binlogit_oof[epoch], float(thr))
+            if sc > best[0]:
+                best = (sc, epoch, float(thr))
+
+    print("\n✅ Best OOF:", best)  # (score, epoch, thr)
+
+
 
 def train(model, loader, optimizer, device, epoch=None, lambda_bin=1.0, unet_weight=0.0):
     model.train()
@@ -205,6 +352,7 @@ def train(model, loader, optimizer, device, epoch=None, lambda_bin=1.0, unet_wei
         print(f"Train loss: {last_loss:.4f}")
 
     return last_loss
+
     
 def gesture_losses_from_logits(logits_g18: torch.Tensor, y_g18: torch.Tensor, label_smoothing: float = 0.0, lambda_bin: float = 1.0):
     """
@@ -287,5 +435,31 @@ def metric_with_threshold(y, logits_g18, bin_logit, thr):
     f1_binary = f1_score(y < len(target_gestures), pred_idx < len(target_gestures), average="binary")
     f1_macro  = f1_score(y.clip(max=len(target_gestures)), pred_idx.clip(max=len(target_gestures)), average="macro")
     return (f1_binary + f1_macro) / 2
+
+
+@torch.inference_mode()
+def predict_one_sequence(model, x_seq, x_tof_seq, x_thm_seq, device, thr: float):
+    """Returns a gesture string that is guaranteed to be in train labels."""
+    model.eval()
+    x = torch.tensor(x_seq, dtype=torch.float32, device=device).unsqueeze(0)         # (1, C, T)
+    x_tof = torch.tensor(x_tof_seq, dtype=torch.float32, device=device).unsqueeze(0) # (1, T, 320)
+    x_thm = torch.tensor(x_thm_seq, dtype=torch.float32, device=device).unsqueeze(0) # (1, T, 5)
+
+    preds_stack, _ = model(x, x_tof, x_thm)
+    logits = preds_stack.mean(dim=1)          # (1, out_dim)
+    logits_g = logits[:, :N_GESTURES].cpu().numpy()[0]
+
+    logit_t = np.log(np.exp(logits_g[:N_TARGET]).sum() + 1e-9)
+    logit_n = np.log(np.exp(logits_g[N_TARGET:]).sum() + 1e-9)
+    bin_logit = logit_t - logit_n
+    p_target = 1.0 / (1.0 + np.exp(-bin_logit))
+
+    if p_target < thr:
+        idx = N_TARGET + int(np.argmax(logits_g[N_TARGET:]))
+    else:
+        idx = int(np.argmax(logits_g[:N_TARGET]))
+
+    return all_gestures[idx]
+
 if __name__ == "__main__":
     main()
