@@ -289,7 +289,7 @@ def main():
             if sc > best[0]:
                 best = (sc, epoch, float(thr))
 
-    print("\n✅ Best OOF:", best)  # (score, epoch, thr)
+    print("\n Best OOF:", best)  # (score, epoch, thr)
 
 
 
